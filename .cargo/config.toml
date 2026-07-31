@@ -1,0 +1,13 @@
+[build]
+# Define el target objetivo predeterminado para este proyecto
+target = "riscv64gc-unknown-none-elf"
+
+[target.riscv64gc-unknown-none-elf]
+# Le pasamos las banderas al enlazador (rustc/gcc)
+rustflags = [
+    "-C", "link-arg=-Tlinkers/linker.ld",
+]
+
+# (Opcional) Configura el comando de ejecución predeterminado
+[target.'cfg(all())']
+runner = "qemu-system-riscv64 -machine virt -bios default -nographic -kernel"

@@ -1,0 +1,1 @@
+/home/thehuziek/projects/mango-os/target/riscv64gc-unknown-none-elf/debug/MangoOS: /home/thehuziek/projects/mango-os/src/asm/boot.S /home/thehuziek/projects/mango-os/src/asm/trapvector.S /home/thehuziek/projects/mango-os/src/main.rs /home/thehuziek/projects/mango-os/src/physical_allocator.rs /home/thehuziek/projects/mango-os/src/uart.rs

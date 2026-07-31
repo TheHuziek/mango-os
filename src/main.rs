@@ -1,0 +1,145 @@
+#![no_std]
+#![no_main]
+use core::arch::{asm, global_asm};
+use core::fmt::Write;
+use core::panic::PanicInfo;
+use fdt::Fdt; // Importamos las herramientas de formateo
+
+global_asm!(include_str!("asm/boot.S"));
+global_asm!(include_str!("asm/trapvector.S"));
+unsafe extern "C" {
+    fn trap_vector();
+}
+
+mod physical_allocator;
+mod uart;
+use crate::uart::Uart;
+//use fdt::Fdt;
+//inicializar el plic
+const PLIC_BASE: usize = 0x0c00_0000;
+const UART_IRQ: u32 = 10; // QEMU asigna el IRQ 10 al UART0
+
+const PLIC_PRIORITY: usize = PLIC_BASE + (UART_IRQ as usize) * 4;
+const PLIC_SENABLE: usize = PLIC_BASE + 0x2080;
+const PLIC_STHRESHOLD: usize = PLIC_BASE + 0x20_1000;
+const PLIC_SCLAIM: usize = PLIC_BASE + 0x20_1004;
+// La dirección de memoria donde QEMU mapea el UART 16550A
+const UART_BASE: usize = 0x1000_0000;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
+    let mut uart = Uart::new(UART_BASE);
+    let _ = writeln!(uart, "inicializando las interrupciones");
+    //1 configurar el uart para comunicacion
+    uart.enable_rx_interrupt();
+    unsafe {
+        // le damos prioridad 1 a uart para que importe tiene que ser mayor a 0
+        core::ptr::write_volatile(PLIC_PRIORITY as *mut u32, 1);
+        //habilitar el IRQ 10 en S-Mode
+        core::ptr::write_volatile(PLIC_SENABLE as *mut u32, 1 << UART_IRQ);
+        //aceptar interrupciones de cualquier prioridad mayor a 0
+        core::ptr::write_volatile(PLIC_STHRESHOLD as *mut u32, 0);
+    }
+    // 3. Configurar CPU (CSRs)
+    unsafe {
+        // Declaramos que la etiqueta 'trap_vector' existe en ensamblador
+
+        // stvec: Apuntamos el vector de interrupciones a nuestro código en boot.S
+        asm!("csrw stvec, {}", in(reg) trap_vector as *const() as usize);
+
+        // sie: Habilitamos "External Interrupts" (Bit 9)
+        asm!("csrs sie, {}", in(reg) 1 << 9);
+
+        // sstatus: Habilitamos interrupciones globales para S-mode (Bit 1)
+        asm!("csrs sstatus, {}", in(reg) 1 << 1);
+    }
+    let fdt = unsafe {
+        Fdt::from_ptr(dtb as *const u8)
+            .expect("El puntero DTB es inválido o el formato es incorrecto")
+    };
+    let _ = writeln!(uart, "hay {} cpus", fdt.cpus().count());
+    let memory = fdt.memory();
+    let mut start: usize = 0x80000000;
+    let mut size: usize = 0x4000000;
+    for region in memory.regions() {
+        start = region.starting_address as usize;
+        size = region.size.unwrap_or(0);
+        let _ = writeln!(uart, "start:{:#x} size:{:#x}", start, size);
+
+        // Aquí es donde enviarías 'start' y 'size' a tu Asignador Físico
+        // (tu Free List o Bitmap) para inicializarlo.
+        // init_physical_allocator(start, size);
+    }
+
+    let _ = writeln!(uart, "Escribe algo! El kernel hara eco.");
+    let _ = writeln!(uart, "el device tree esta en {:#x}", fdt.total_size());
+    let _ = writeln!(
+        uart,
+        "el kernel termina en {:#x}",
+        rust_main as *const () as usize
+    );
+    let mut physical_allocator: physical_allocator::PhysicalAllocator =
+        physical_allocator::PhysicalAllocator::new();
+
+    physical_allocator.init_allocator(start, size, rust_main as *const () as usize);
+    let tiempo: u64 = read_time();
+    let primera = physical_allocator.alloc().unwrap();
+    unsafe { core::ptr::write_volatile(primera as *mut u32, tiempo as u32) };
+    let _ = writeln!(uart, "este es el tiempo{}", tiempo);
+    loop {
+        unsafe { asm!("wfi") }
+    }
+}
+fn read_time() -> u64 {
+    let mut time: u64;
+    unsafe { core::arch::asm!("csrr {} ,time",out(reg) time) }
+    time
+}
+// Leer el tiempo actual desde el registro CSR 'time' (solo lectura en S-mode)
+fn sbi_timer_set(stime_value: u64) {
+    unsafe {
+        core::arch::asm!(
+        "ecall",
+        in("a0") stime_value, // El valor del tiempo para la alarma
+        in("a6") 0,           // FID (Function ID) = 0
+        in("a7") 0x5449_4D45,        // EID (Extension ID) = 0x54 (TIME)
+        )
+    }
+}
+// Este es el código que se ejecuta cada vez que ocurre una interrupción
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_trap_handler() {
+    unsafe {
+        // 1. Reclamar (Claim): Le preguntamos al PLIC qué IRQ disparó esto
+        let irq = core::ptr::read_volatile(PLIC_SCLAIM as *const u32);
+
+        if irq == UART_IRQ {
+            let mut uart = Uart::new(UART_BASE);
+            // Leemos todos los caracteres disponibles y los imprimimos de vuelta
+            while let Some(c) = uart.get_char() {
+                // Si presionas Enter (carriage return), imprimimos una nueva línea
+                if c == b'\r' {
+                    let _ = writeln!(uart, "");
+                } else {
+                    uart.put_char(c);
+                }
+            }
+        }
+
+        // 2. Completar: Le decimos al PLIC que ya terminamos de atender la interrupción
+        if irq != 0 {
+            core::ptr::write_volatile(PLIC_SCLAIM as *mut u32, irq);
+        }
+    }
+}
+
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    let mut uart = Uart::new(UART_BASE);
+    let _ = writeln!(uart, "\n[KERNEL PANIC]");
+    let _ = writeln!(uart, "{}", info);
+    loop {
+        unsafe { asm!("wfi") }
+    }
+}
