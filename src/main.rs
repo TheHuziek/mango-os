@@ -83,16 +83,34 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
         physical_allocator::PhysicalAllocator::new();
 
     physical_allocator.init_allocator(start, size, rust_main as *const () as usize);
-    sbi_timer_set(12_000_000);
-    let tiempo: u64 = read_time();
-    let primera = physical_allocator.alloc().unwrap();
-    unsafe { core::ptr::write_volatile(primera as *mut u32, tiempo as u32) };
-    let segunda = physical_allocator.alloc().unwrap();
-    unsafe { core::ptr::write_volatile(segunda as *mut u32, tiempo as u32) };
-    
+    let root_page=physical_allocator.alloc().unwrap();
+    enable_mmu(root_page);
     loop {
         unsafe { asm!("wfi") }
     }
+}
+ fn enable_mmu(root_table_phys_addr: usize) {
+    // 1. Validar alineación a nivel de página (4 KiB)
+    assert!(root_table_phys_addr % 4096 == 0, "La tabla raíz no está alineada a 4K");
+
+    // 2. Calcular el Physical Page Number (PPN)
+    let ppn = root_table_phys_addr / 4096;
+
+    // 3. Construir el valor del registro satp
+    // MODE = 8 (Sv39) se desplaza al bit 60
+    let mode_sv39: usize = 8 << 60;
+    
+    // ASID = 0 (bits 44 a 59 quedan en 0)
+    let satp_val = mode_sv39 | ppn;
+
+    // 4. Escribir en el CSR satp
+    unsafe {core::arch::asm!("csrw satp, {}", in(reg) satp_val);
+    // satp::write(satp_val);
+
+    // 5. Ejecutar sfence.vma (vaciado del TLB)
+    // El primer argumento indica la dirección virtual (0 = todas)
+    // El segundo indica el ASID (0 = todos)
+    asm!("sfence.vma zero, zero", options(nostack, preserves_flags));}
 }
 fn read_time() -> u64 {
     let mut time: u64;

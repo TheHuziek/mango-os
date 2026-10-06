@@ -13,4 +13,5 @@ panic = "abort" # disable stack unwinding on panic
 panic = "abort" # disable stack unwinding on panic
 
 [dependencies]
+bitflags = "2.13.2"
 fdt = "0.1.5"
