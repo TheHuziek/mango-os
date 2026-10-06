@@ -1,6 +1,6 @@
 # Mango OS
 
-A lightweight operating system project built in C and assembly, designed to explore kernel development, system architecture, and low-level software.
+A lightweight operating system project built in Rust and assembly, designed to explore kernel development, system architecture, and low-level software.
 
 ## Overview
 
@@ -16,7 +16,6 @@ This project is intended for learning and experimentation, and it can be expande
 ## Features
 
 - Minimal kernel boot flow
-- x86-compatible kernel foundation
 - Custom memory and interrupt handling
 - Extensible build system
 - Easy local testing with emulation
@@ -42,8 +41,7 @@ mango-os/
 Before building Mango OS, make sure you have:
 
 - GCC or Clang
-- GNU Make
-- NASM (if assembly files are used)
+- Rust(cargo,rustc etc)
 - QEMU (for running the OS in a virtual machine)
 - A Unix-like environment or WSL on Windows
 
@@ -59,13 +57,13 @@ cd mango-os
 Build the project:
 
 ```bash
-make
+cargo build
 ```
 
 Run the OS in QEMU:
 
 ```bash
-qemu-system-x86_64 -kernel build/kernel.bin
+qemu-system-riscv64 -machine virt -smp 4 -bios default -kernel target/riscv64gc-unknown-none-elf/debug/MangoOS  -nographic
 ```
 
 If the project uses a different boot target, follow the build instructions in the Makefile or project scripts.
@@ -77,15 +75,10 @@ If the project uses a different boot target, follow the build instructions in th
 - Test changes using an emulator before running on real hardware.
 - Document new APIs and drivers as the project grows.
 
-## Roadmap
-
-- Add a working bootloader and kernel entry point
-- Implement basic memory management
-- Add interrupt and exception handling
-- Build a simple process scheduler
-- Support keyboard and display drivers
-- Add a basic shell or userland environment
-- Expand with filesystem support
+## TODO List 
+- [ ] make a scheduler 
+- [ ] make a graphics driver 
+- [ ] compatibility with glibc 
 
 ## Contributing
 
