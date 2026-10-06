@@ -20,21 +20,21 @@ This project is intended for learning and experimentation, and it can be expande
 - Extensible build system
 - Easy local testing with emulation
 
-## Project Structure
+<!-- ## Project Structure
 
 ```text
 mango-os/
-├── boot/          # Bootloader and startup code
-├── kernel/        # Core kernel implementation
+├── src/          # Bootloader and startup code
+    ├─── kernel/        # Core kernel implementation
 ├── include/       # Public headers
 ├── src/           # Source files
 ├── drivers/       # Device drivers
 ├── lib/           # Runtime/library helpers
 ├── tools/         # Build and utility scripts
 ├── Makefile       # Build entry point
-├── README.md      # Project documentation
+├── Ca      # Project documentation
 └── LICENSE        # License information
-```
+``` -->
 
 ## Requirements
 
