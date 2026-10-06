@@ -33,7 +33,7 @@ impl PhysicalAllocator {
             Some(current_block as usize)
         }
     }
-    pub unsafe fn free(&mut self, address: usize) {
+    pub unsafe fn free(&mut self, address: usize) { unsafe {
         // 1. Validar que la dirección esté alineada a 4 KB
         assert!(
             address % PAGE_SIZE == 0,
@@ -48,7 +48,7 @@ impl PhysicalAllocator {
 
         // 4. Actualizar la cabeza para que apunte a este nuevo bloque
         self.head = block;
-    }
+    }}
     pub fn init_allocator(&mut self, ram_start: usize, ram_size: usize, end_of_kernel: usize) {
         let kernel_end = core::ptr::addr_of!(end_of_kernel) as usize;
 
@@ -68,5 +68,4 @@ impl PhysicalAllocator {
     pub fn align_up(addr: usize, align: usize) -> usize {
         (addr + align - 1) & !(align - 1)
     }
-    fn malloc() {}
 }

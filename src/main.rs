@@ -53,6 +53,7 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
         // sstatus: Habilitamos interrupciones globales para S-mode (Bit 1)
         asm!("csrs sstatus, {}", in(reg) 1 << 1);
     }
+    
     let fdt = unsafe {
         Fdt::from_ptr(dtb as *const u8)
             .expect("El puntero DTB es inválido o el formato es incorrecto")
@@ -85,7 +86,7 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
     let tiempo: u64 = read_time();
     let primera = physical_allocator.alloc().unwrap();
     unsafe { core::ptr::write_volatile(primera as *mut u32, tiempo as u32) };
-    let _ = writeln!(uart, "este es el tiempo{}", tiempo);
+    
     loop {
         unsafe { asm!("wfi") }
     }
@@ -107,32 +108,55 @@ fn sbi_timer_set(stime_value: u64) {
     }
 }
 // Este es el código que se ejecuta cada vez que ocurre una interrupción
+fn uart_interrupt_handler() {
+    // Reutilizamos una sola instancia
+    let mut uart = Uart::new(UART_BASE);
 
-#[unsafe(no_mangle)]
-pub extern "C" fn rust_trap_handler() {
-    unsafe {
-        // 1. Reclamar (Claim): Le preguntamos al PLIC qué IRQ disparó esto
-        let irq = core::ptr::read_volatile(PLIC_SCLAIM as *const u32);
-
-        if irq == UART_IRQ {
-            let mut uart = Uart::new(UART_BASE);
-            // Leemos todos los caracteres disponibles y los imprimimos de vuelta
-            while let Some(c) = uart.get_char() {
-                // Si presionas Enter (carriage return), imprimimos una nueva línea
-                if c == b'\r' {
-                    let _ = writeln!(uart, "");
-                } else {
-                    uart.put_char(c);
-                }
-            }
-        }
-
-        // 2. Completar: Le decimos al PLIC que ya terminamos de atender la interrupción
-        if irq != 0 {
-            core::ptr::write_volatile(PLIC_SCLAIM as *mut u32, irq);
+    // Leemos todos los caracteres disponibles en la FIFO
+    while let Some(c) = uart.get_char() {
+        if c == b'\r' {
+            let _ = writeln!(uart, "");
+        } else {
+            uart.put_char(c);
         }
     }
 }
+#[unsafe(no_mangle)]
+
+pub extern "C" fn rust_trap_handler() {
+    let cause: usize;
+    unsafe {
+        core::arch::asm!("csrr {}, scause", out(reg) cause);
+    }
+
+    // En RISC-V 64-bit, el bit MSB (bit 63) indica si es interrupción o excepción
+    let is_interrupt = (cause & (1 << 63)) != 0;
+    let code = cause & !(1 << 63);
+
+    if is_interrupt {
+        match code {
+            9 => {
+                // 1. Reclamar (Claim) la interrupción en el PLIC
+                let irq = unsafe { core::ptr::read_volatile(PLIC_SCLAIM as *const u32) };
+
+                if irq == UART_IRQ {
+                    uart_interrupt_handler();
+                }
+
+                // 2. Completar (Complete): Notificar al PLIC que la IRQ fue atendida
+                if irq != 0 {
+                    unsafe {
+                        core::ptr::write_volatile(PLIC_SCLAIM as *mut u32, irq);
+                    }
+                }
+            }
+            _ => {}
+        }
+    } else {
+        // Manejar excepciones aquí
+    }
+}
+
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
