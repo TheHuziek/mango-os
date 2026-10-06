@@ -10,7 +10,8 @@ global_asm!(include_str!("asm/trapvector.S"));
 unsafe extern "C" {
     fn trap_vector();
 }
-
+mod mmu;
+use crate::mmu::enable_mmu;
 mod physical_allocator;
 mod uart;
 use crate::uart::Uart;
@@ -60,13 +61,22 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
     };
     let _ = writeln!(uart, "hay {} cpus", fdt.cpus().count());
     let memory = fdt.memory();
-    let mut start: usize = 0x80000000;
-    let mut size: usize = 0x4000000;
+    let mut physical_allocator: physical_allocator::PhysicalAllocator =
+        physical_allocator::PhysicalAllocator::new();
+    // 2. Encontrar el final real del kernel en memoria
+    let kernel_end_addr = unsafe { rust_main as *const () as usize };
     for region in memory.regions() {
-        start = region.starting_address as usize;
-        size = region.size.unwrap_or(0);
+        let start = region.starting_address as usize;
+        let size = region.size.unwrap_or(0);
         let _ = writeln!(uart, "start:{:#x} size:{:#x}", start, size);
-
+        let alloc_start = if start <= kernel_end_addr {
+                // Si la RAM incluye al kernel, empezamos justo después, alineado a 4KB
+                align_up(kernel_end_addr, 4096)
+            } else {
+                align_up(start, 4096)
+            };
+            let size_to_add = (start + size) - alloc_start;
+            physical_allocator.init_allocator(start, size, kernel_end_addr);
         // Aquí es donde enviarías 'start' y 'size' a tu Asignador Físico
         // (tu Free List o Bitmap) para inicializarlo.
         // init_physical_allocator(start, size);
@@ -79,58 +89,35 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
         "el kernel termina en {:#x}",
         rust_main as *const () as usize
     );
-    let mut physical_allocator: physical_allocator::PhysicalAllocator =
-        physical_allocator::PhysicalAllocator::new();
-
-    physical_allocator.init_allocator(start, size, rust_main as *const () as usize);
     let root_page=physical_allocator.alloc().unwrap();
-    enable_mmu(root_page);
+    unsafe {enable_mmu(root_page)};
+    writeln!(uart, "MMU habilitada con tabla raíz en {:#x}", root_page).unwrap();
     loop {
         unsafe { asm!("wfi") }
     }
 }
- fn enable_mmu(root_table_phys_addr: usize) {
-    // 1. Validar alineación a nivel de página (4 KiB)
-    assert!(root_table_phys_addr % 4096 == 0, "La tabla raíz no está alineada a 4K");
-
-    // 2. Calcular el Physical Page Number (PPN)
-    let ppn = root_table_phys_addr / 4096;
-
-    // 3. Construir el valor del registro satp
-    // MODE = 8 (Sv39) se desplaza al bit 60
-    let mode_sv39: usize = 8 << 60;
-    
-    // ASID = 0 (bits 44 a 59 quedan en 0)
-    let satp_val = mode_sv39 | ppn;
-
-    // 4. Escribir en el CSR satp
-    unsafe {core::arch::asm!("csrw satp, {}", in(reg) satp_val);
-    // satp::write(satp_val);
-
-    // 5. Ejecutar sfence.vma (vaciado del TLB)
-    // El primer argumento indica la dirección virtual (0 = todas)
-    // El segundo indica el ASID (0 = todos)
-    asm!("sfence.vma zero, zero", options(nostack, preserves_flags));}
+fn align_up(addr: usize, align: usize) -> usize {
+    (addr + align - 1) & !(align - 1)
 }
-fn read_time() -> u64 {
-    let mut time: u64;
-    unsafe { core::arch::asm!("csrr {} ,time",out(reg) time) }
-    time
-}
-// Leer el tiempo actual desde el registro CSR 'time' (solo lectura en S-mode)
-fn sbi_timer_set(stime_value: u64) {
-    let _error: isize;
-    let _value: usize;
-    unsafe {
-        core::arch::asm!(
-            "ecall",
-            inout("a0") stime_value as usize => _error,
-            lateout("a1") _value,
-            in("a6") 0,          // FID = 0
-            in("a7") 0x5449_4D45, // EID = TIME
-        );
-    }
-}
+// fn read_time() -> u64 {
+//     let mut time: u64;
+//     unsafe { core::arch::asm!("csrr {} ,time",out(reg) time) }
+//     time
+// }
+// // Leer el tiempo actual desde el registro CSR 'time' (solo lectura en S-mode)
+// fn sbi_timer_set(stime_value: u64) {
+//     let _error: isize;
+//     let _value: usize;
+//     unsafe {
+//         core::arch::asm!(
+//             "ecall",
+//             inout("a0") stime_value as usize => _error,
+//             lateout("a1") _value,
+//             in("a6") 0,          // FID = 0
+//             in("a7") 0x5449_4D45, // EID = TIME
+//         );
+//     }
+// }
 // Este es el código que se ejecuta cada vez que ocurre una interrupción
 fn uart_interrupt_handler() {
     // Reutilizamos una sola instancia
