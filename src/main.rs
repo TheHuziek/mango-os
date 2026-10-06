@@ -83,9 +83,12 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
         physical_allocator::PhysicalAllocator::new();
 
     physical_allocator.init_allocator(start, size, rust_main as *const () as usize);
+    sbi_timer_set(12_000_000);
     let tiempo: u64 = read_time();
     let primera = physical_allocator.alloc().unwrap();
     unsafe { core::ptr::write_volatile(primera as *mut u32, tiempo as u32) };
+    let segunda = physical_allocator.alloc().unwrap();
+    unsafe { core::ptr::write_volatile(segunda as *mut u32, tiempo as u32) };
     
     loop {
         unsafe { asm!("wfi") }
@@ -98,13 +101,16 @@ fn read_time() -> u64 {
 }
 // Leer el tiempo actual desde el registro CSR 'time' (solo lectura en S-mode)
 fn sbi_timer_set(stime_value: u64) {
+    let _error: isize;
+    let _value: usize;
     unsafe {
         core::arch::asm!(
-        "ecall",
-        in("a0") stime_value, // El valor del tiempo para la alarma
-        in("a6") 0,           // FID (Function ID) = 0
-        in("a7") 0x5449_4D45,        // EID (Extension ID) = 0x54 (TIME)
-        )
+            "ecall",
+            inout("a0") stime_value as usize => _error,
+            lateout("a1") _value,
+            in("a6") 0,          // FID = 0
+            in("a7") 0x5449_4D45, // EID = TIME
+        );
     }
 }
 // Este es el código que se ejecuta cada vez que ocurre una interrupción
