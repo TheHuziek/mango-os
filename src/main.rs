@@ -91,6 +91,14 @@ pub extern "C" fn rust_main(_hartid: usize, dtb: usize) -> ! {
     );
     let root_page=physical_allocator.alloc().unwrap();
     unsafe {enable_mmu(root_page)};
+    let page=unsafe { &mut *(root_page as *mut mmu::PageTable) };
+    page.map(0x1000_0000, 0x1000_0000, mmu::PteFlags::READ | mmu::PteFlags::WRITE | mmu::PteFlags::EXECUTE | mmu::PteFlags::VALID, &mut || physical_allocator.alloc()).unwrap();
+    page.map(0x1000_1000, 0x1000_1000, mmu::PteFlags::READ | mmu::PteFlags::WRITE | mmu::PteFlags::EXECUTE | mmu::PteFlags::VALID, &mut || physical_allocator.alloc()).unwrap();
+    page.map(0x1000_2000, 0x1000_2000, mmu::PteFlags::READ | mmu::PteFlags::WRITE | mmu::PteFlags::EXECUTE | mmu::PteFlags::VALID, &mut || physical_allocator.alloc()). unwrap();
+    let _ = writeln!(uart, "MMU habilitada con tabla raíz en {:#x}", root_page);
+    let _ = writeln!(uart, "Escribe algo! El kernel hara eco.");
+    let _ = writeln!(uart, "el device tree esta en {:#x}", fdt.total_size());
+    let _ = writeln!(uart, "el kernel termina en {:#x}", rust_main as *const () as usize);
     writeln!(uart, "MMU habilitada con tabla raíz en {:#x}", root_page).unwrap();
     loop {
         unsafe { asm!("wfi") }
